@@ -64,3 +64,60 @@ class PerformanceAnalyzer:
         print(f"\nTiempo promedio: {self.results['sequential']['avg_time']*1000:.2f} ms/frame")
         print(f"FPS promedio: {self.results['sequential']['fps']:.2f}")
         print("=" * 70)
+        
+        def measure_parallel(self, video_source=0):
+            print("\n" + "=" * 70)
+            print("MIDIENDO RENDIMIENTO: VERSIÓN PARALELA (2 PROCESOS - MULTIPROCESSING)")
+            print("=" * 70)
+        
+        from multiprocessing import Value
+        detector = ParallelPipelineDetector(camera_id=video_source) 
+        detector.running.value = 1
+        
+        from multiprocessing import Process
+        p1 = Process(target=detector.capture_process, args=(detector.camera_id, detector.frame_queue, detector.running))
+        p2 = Process(target=detector.processing_process, args=(detector.frame_queue, detector.result_queue, detector.running))
+        
+        p1.start()
+        p2.start()
+        
+        frame_count = 0
+        frame_times = []
+        
+        try:
+            time.sleep(1.0)
+            
+            start_time = time.time()
+            
+            while frame_count < self.num_frames:
+                try:
+                    result_data = detector.result_queue.get(timeout=1.0)
+                    frame_times.append(time.time())
+                    frame_count += 1
+                    
+                    if frame_count % 10 == 0:
+                        print(f"Procesados: {frame_count}/{self.num_frames} frames")
+                        
+                except:
+                    continue
+            
+            total_time = time.time() - start_time
+            
+            # Calcular tiempo promedio por cada frame
+            if len(frame_times) > 1:
+                intervals = np.diff(frame_times)
+                avg_interval = np.mean(intervals)
+                self.results['parallel']['avg_time'] = avg_interval
+                self.results['parallel']['fps'] = 1.0 / avg_interval
+            
+        finally:
+            detector.running.value = 0
+            time.sleep(0.5)
+            p1.terminate()
+            p2.terminate()
+            p1.join(timeout=1)
+            p2.join(timeout=1)
+        
+        print(f"\nTiempo promedio: {self.results['parallel']['avg_time']*1000:.2f} ms/frame")
+        print(f"FPS promedio: {self.results['parallel']['fps']:.2f}")
+        print("=" * 70)
