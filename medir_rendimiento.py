@@ -121,3 +121,57 @@ class PerformanceAnalyzer:
         print(f"\nTiempo promedio: {self.results['parallel']['avg_time']*1000:.2f} ms/frame")
         print(f"FPS promedio: {self.results['parallel']['fps']:.2f}")
         print("=" * 70)
+        
+def calculate_metrics(self):
+        seq_time = self.results['sequential']['avg_time']
+        par_time = self.results['parallel']['avg_time']
+        
+        if par_time > 0:
+            self.results['speedup'] = seq_time / par_time
+            
+            self.results['efficiency'] = self.results['speedup'] / self.results['num_threads']
+        
+        if seq_time > 0:
+            latency_reduction = ((seq_time - par_time) / seq_time) * 100
+            self.results['latency_reduction'] = latency_reduction
+        else:
+            self.results['latency_reduction'] = 0
+    
+def print_results(self):
+
+        print("\n" + "=" * 70)
+        print("RESULTADOS DE RENDIMIENTO")
+        print("=" * 70)
+        
+        print("\nVersión Secuencial:")
+        print(f"  Tiempo promedio: {self.results['sequential']['avg_time']*1000:.2f} ms/frame")
+        print(f"  FPS:             {self.results['sequential']['fps']:.2f}")
+        
+        print("\nVersión Paralela (2 procesos - multiprocessing):")
+        print(f"  Tiempo promedio: {self.results['parallel']['avg_time']*1000:.2f} ms/frame")
+        print(f"  FPS:             {self.results['parallel']['fps']:.2f}")
+        
+        print("\n" + "-" * 70)
+        print("MÉTRICAS DE PARALELIZACIÓN:")
+        print("-" * 70)
+        print(f"Speedup:            {self.results['speedup']:.2f}x")
+        print(f"Eficiencia:         {self.results['efficiency']*100:.1f}%")
+        print(f"Reducción latencia: {self.results['latency_reduction']:.1f}%")
+        print(f"Número de hilos:    {self.results['num_threads']}")
+        
+        print("\n" + "=" * 70)
+        
+        print("\nEVALUACIÓN VS OBJETIVOS DEL PROTOCOLO:")
+        print("-" * 70)
+        
+        if self.results['latency_reduction'] > 40:
+            print(f"✓ Reducción latencia: {self.results['latency_reduction']:.1f}% (Objetivo: >40%)")
+        else:
+            print(f"✗ Reducción latencia: {self.results['latency_reduction']:.1f}% (Objetivo: >40%)")
+        
+        if self.results['parallel']['fps'] >= 15:
+            print(f"✓ Throughput: {self.results['parallel']['fps']:.1f} FPS (Objetivo: ≥15 FPS)")
+        else:
+            print(f"✗ Throughput: {self.results['parallel']['fps']:.1f} FPS (Objetivo: ≥15 FPS)")
+        
+        print("=" * 70)
