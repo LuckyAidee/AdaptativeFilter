@@ -331,7 +331,7 @@ class VideoPipeline:
     def _overlay(self, frame, conditions, filter_used):
 
         img = frame.copy()
-        overlay = img.copy()
+        box = img.copy()
 
         # caja
         cv2.rectangle(box, (10, 10), (300, 80), (0, 0, 0), -1)
