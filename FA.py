@@ -34,34 +34,23 @@ class AdaptiveFilter:
 
      # Analiza el fotograma y estima condiciones de luz, niebla y lluvia.
     def analyze_frame(self, frame):
+        start_time = time.time()
+
+        # Hacemos un preprocesamiento para reducir la resolución y hacemos una conversión de color
+
+        # Usamos una versión más pequeña del frame para procesar más rápido.
         resized = cv2.resize(frame, self.resolution)
         gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
         hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
 
-        brightness = np.mean(gray)
-        blur_value = cv2.Laplacian(gray, cv2.CV_64F).var()
+        # Tomamos solo la región central (Aqui es donde hay más información útil)
+        h, w = gray.shape
+        center = gray[h // 4: 3 * h // 4, w // 4: 3 * w // 4]
 
-        # Luz baja 
-        low_light = brightness < 80
-
-        # Niebla 
-        edges = cv2.Canny(gray, 40, 120)
-        edge_density = np.sum(edges) / edges.size
-        fog = edge_density < 0.05 and brightness > 60
-
-        # Lluvia 
-        gray_blur = cv2.medianBlur(gray, 5)
-        rain_edges = cv2.Canny(gray_blur, 40, 120)
-        lines = cv2.HoughLinesP(rain_edges, 1, np.pi / 180, 15, minLineLength=20, maxLineGap=10)
-        rain = lines is not None and len(lines) > 10
-
-        return {
-            "low_light": low_light,
-            "fog": fog,
-            "rain": rain,
-            "brightness": brightness,
-            "blur": blur_value
-        }
+        #Realizamos un calculo de de luz y ruido
+        brightness = float(np.mean(gray))           # Brillo general
+        center_brightness = float(np.mean(center))  # Brillo del centro del frame
+        noise_level = float(np.std(center))         # Variación de intensidad (ruido)
     
     # Promedia las últimas detecciones para evitar cambios bruscos
     def _smooth_conditions(self, conditions):
