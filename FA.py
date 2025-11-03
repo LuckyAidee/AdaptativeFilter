@@ -152,21 +152,20 @@ class AdaptiveFilter:
     
     # Promedia las últimas detecciones para evitar cambios bruscos
     def _smooth_conditions(self, conditions):
-        
+
         self.history.append(conditions)
         if len(self.history) < 2:
             return conditions
 
-        smoothed = {}
-        for key in ["low_light", "fog", "rain"]:
-            votes = sum(1 for c in self.history if c[key])
-            smoothed[key] = votes >= len(self.history) // 2
+        out = {}
+        for key in ("low_light", "fog", "rain"):
+            votes = sum(1 for c in self.history if c.get(key))
+            out[key] = votes >= (len(self.history) // 2)
 
-        smoothed.update({
-            "brightness": conditions["brightness"],
-            "blur": conditions["blur"]
-        })
-        return smoothed
+        # Métricas continuas: última medición (rápido y consistente)
+        out["brightness"] = conditions.get("brightness", 0.0)
+        out["blur"] = conditions.get("blur", 0.0)
+        return out
     
     #LIME: Mejora zonas oscuras en condiciones de poca luz.
     def _apply_lime(self, frame):
