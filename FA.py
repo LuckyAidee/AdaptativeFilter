@@ -1,4 +1,5 @@
 import cv2
+from matplotlib.pyplot import box
 import numpy as np
 import time
 from multiprocessing import Process, Queue, Value
@@ -333,8 +334,8 @@ class VideoPipeline:
         overlay = img.copy()
 
         # caja
-        cv2.rectangle(overlay, (10, 10), (300, 80), (0, 0, 0), -1)
-        cv2.addWeighted(overlay, 0.6, img, 0.4, 0, img)
+        cv2.rectangle(box, (10, 10), (300, 80), (0, 0, 0), -1)
+        cv2.addWeighted(box, 0.6, img, 0.4, 0, img)
 
         # texto
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -342,25 +343,27 @@ class VideoPipeline:
         y = 25
         cv2.putText(img, f"FPS: {self.current_fps:.0f} | {filter_used}", (15, y), font, fs, (255, 255, 255), th)
         y += 15
-        b_col = (255, 100, 100) if conditions.get("brightness", 100) < 85 else (255, 255, 255)
-        cv2.putText(img, f"Brillo: {conditions.get('brightness', 0):.0f}", (15, y), font, fs, b_col, th)
+        col = (255, 100, 100) if conditions.get("brightness", 100) < 85 else (255, 255, 255)
+        cv2.putText(img, f"Brillo: {conditions.get('brightness', 0):.0f}", (15, y), font, fs, col, th)
+
 
         # indicadores L/F/R
         yc = 60
-        status = {
+        dot = {
             "low_light": (100, 255, 255) if conditions.get("low_light") else (60, 60, 60),
             "fog":      (255, 100, 255) if conditions.get("fog")      else (60, 60, 60),
             "rain":     (100, 255, 100) if conditions.get("rain")     else (60, 60, 60),
         }
-        cv2.circle(img, (15, yc), 6, status["low_light"], -1); cv2.putText(img, "L", (12, yc+3), font, 0.3, (0,0,0), 1)
-        cv2.circle(img, (40, yc), 6, status["fog"], -1);      cv2.putText(img, "F", (37, yc+3), font, 0.3, (0,0,0), 1)
-        cv2.circle(img, (65, yc), 6, status["rain"], -1);     cv2.putText(img, "R", (62, yc+3), font, 0.3, (0,0,0), 1)
+        cv2.circle(img, (15, yc), 6, dot["low_light"], -1); cv2.putText(img, "L", (12, yc+3), font, 0.3, (0,0,0), 1)
+        cv2.circle(img, (40, yc), 6, dot["fog"], -1);      cv2.putText(img, "F", (37, yc+3), font, 0.3, (0,0,0), 1)
+        cv2.circle(img, (65, yc), 6, dot["rain"], -1);     cv2.putText(img, "R", (62, yc+3), font, 0.3, (0,0,0), 1)
         return img
     
     def _tick_fps(self):
-         
-         self.fps_counter += 1
-         if self.fps_counter % 30 == 0:
+
+        # Cálculo de FPS
+        self.fps_counter += 1
+        if self.fps_counter % 30 == 0:
             now = time.time()
             self.current_fps = 30 / (now - self.fps_start_time)
             self.fps_start_time = now
@@ -424,7 +427,7 @@ class VideoPipeline:
         print("Sistema detenido.")
     
 def main():
-
+        
         print("=" * 80)
         print("FILTRO ADAPTATIVO")
         print("=" * 80)
@@ -432,9 +435,9 @@ def main():
             app = VideoPipeline(camera_id=0)
             app.run()
         except KeyboardInterrupt:
-             print("\nDetenido")
+            print("\nDetenido")
         except Exception as e:
-             print(f"Error: {e}")
+            print(f"Error: {e}")
     
 if __name__ == "__main__":
     main()
