@@ -320,7 +320,7 @@ class VideoPipeline:
         cv2.destroyAllWindows()
         print("Sistema detenido.")
     
-    def main():
+def main():
 
         print("=" * 80)
         print("FILTRO ADAPTATIVO")
@@ -333,5 +333,5 @@ class VideoPipeline:
         except Exception as e:
              print(f"Error: {e}")
     
-    if __name__ == "__main__":
-        main()
+if __name__ == "__main__":
+    main()
