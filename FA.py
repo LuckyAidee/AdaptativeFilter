@@ -158,5 +158,180 @@ class AdaptiveFilter:
 
         self.times.append(time.time() - start)
         return output
-    
 
+class VideoPipeline:
+
+    # Dirige la captura y procesamiento en 2 procesos.
+    def __init__(self, camera_id=0):
+
+        self.camera_id = camera_id
+        self.frame_queue = Queue(maxsize=8)
+        self.result_queue = Queue(maxsize=8)
+        self.running = Value('i', 0)
+        self.processes = []
+
+        # FPS/UI
+        self.fps_counter = 0
+        self.current_fps = 0.0
+        self.fps_start_time = time.time()
+    
+    # Procesos 
+    @staticmethod
+    def capture_process(camera_id, frame_queue, running):
+        cap = cv2.VideoCapture(camera_id)
+        try:
+            while running.value == 1:
+                ok, frame = cap.read()
+                if not ok:
+                    time.sleep(0.01)
+                    continue
+                try:
+                    frame_queue.put(frame, timeout=0.02)
+                except Exception:
+                     # cola llena: descarta
+                     pass
+        finally:
+            cap.release()
+    
+    @staticmethod
+    def processing_process(frame_queue, result_queue, running):
+        af = AdaptiveFilter()  # instanciado en el proceso de cómputo
+        from queue import Empty
+        while running.value == 1:
+            try:
+                frame = frame_queue.get(timeout=0.05)
+                raw_cond = af.analyze_frame(frame)
+                cond = af._smooth_conditions(raw_cond)
+                out = af.apply_filter(frame, cond)
+
+                data = {
+                    "original": frame,
+                    "filtered": out,
+                    "conditions": cond,
+                    "filter_used": af.active_filter
+                }
+                
+                try:
+                    result_queue.put(data, timeout=0.02)
+                except Exception:
+                    pass
+            except Empty:
+                continue
+            except KeyboardInterrupt:
+                break
+            except Exception:
+                # errores puntuales: seguir
+                continue
+
+    # UI / Utilidades 
+    def _overlay(self, frame, conditions, filter_used):
+
+        img = frame.copy()
+        overlay = img.copy()
+
+        # caja
+        cv2.rectangle(overlay, (10, 10), (300, 80), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.6, img, 0.4, 0, img)
+
+        # texto
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        fs, th = 0.4, 1
+        y = 25
+        cv2.putText(img, f"FPS: {self.current_fps:.0f} | {filter_used}", (15, y), font, fs, (255, 255, 255), th)
+        y += 15
+        b_col = (255, 100, 100) if conditions.get("brightness", 100) < 85 else (255, 255, 255)
+        cv2.putText(img, f"Brillo: {conditions.get('brightness', 0):.0f}", (15, y), font, fs, b_col, th)
+
+        # indicadores L/F/R
+        yc = 60
+        status = {
+            "low_light": (100, 255, 255) if conditions.get("low_light") else (60, 60, 60),
+            "fog":      (255, 100, 255) if conditions.get("fog")      else (60, 60, 60),
+            "rain":     (100, 255, 100) if conditions.get("rain")     else (60, 60, 60),
+        }
+        cv2.circle(img, (15, yc), 6, status["low_light"], -1); cv2.putText(img, "L", (12, yc+3), font, 0.3, (0,0,0), 1)
+        cv2.circle(img, (40, yc), 6, status["fog"], -1);      cv2.putText(img, "F", (37, yc+3), font, 0.3, (0,0,0), 1)
+        cv2.circle(img, (65, yc), 6, status["rain"], -1);     cv2.putText(img, "R", (62, yc+3), font, 0.3, (0,0,0), 1)
+        return img
+    
+    def _tick_fps(self):
+         
+         self.fps_counter += 1
+         if self.fps_counter % 30 == 0:
+            now = time.time()
+            self.current_fps = 30 / (now - self.fps_start_time)
+            self.fps_start_time = now
+    
+    # Loop principal
+    def run(self):
+        try:
+            self.running.value = 1
+            p1 = Process(target=self.capture_process, args=(self.camera_id, self.frame_queue, self.running))
+            p2 = Process(target=self.processing_process, args=(self.frame_queue, self.result_queue, self.running))
+            p1.start(); p2.start()
+            self.processes = [p1, p2]
+
+            print("FA iniciado. (q: salir, s: guardar frame)")
+
+            from queue import Empty
+            while self.running.value == 1:
+                try:
+                    data = self.result_queue.get(timeout=0.1)
+                    original = data["original"]
+                    filtered = data["filtered"]
+                    cond = data["conditions"]
+                    f_used = data["filter_used"]
+
+                    disp = self._overlay(filtered, cond, f_used)
+                    view = np.hstack([original, disp])
+
+                    if view.shape[1] > 1200:
+                        scale = 1200 / view.shape[1]
+                        view = cv2.resize(view, (int(view.shape[1]*scale), int(view.shape[0]*scale)))
+
+                    cv2.imshow("Filtro Adaptativo - Original vs Filtrado", view)
+                    self._tick_fps()
+
+                    k = cv2.waitKey(1) & 0xFF
+                    if k == ord('q'):
+                        break
+                    elif k == ord('s'):
+                        ts = int(time.time())
+                        cv2.imwrite(f"resultado_{ts}.jpg", view)
+                        print(f"Frame guardado: resultado_{ts}.jpg")
+                except Empty:
+                    continue
+                except KeyboardInterrupt:
+                    break
+                except Exception:
+                    # fallos de UI: continuar
+                    continue
+        finally:
+            self.cleanup()
+
+    def cleanup(self):
+
+        self.running.value = 0
+        time.sleep(0.5)
+        for p in self.processes:
+            if p.is_alive():
+                p.terminate()
+                p.join(timeout=1)
+        cv2.destroyAllWindows()
+        print("Sistema detenido.")
+    
+    def main():
+
+        print("=" * 80)
+        print("FILTRO ADAPTATIVO")
+        print("=" * 80)
+        try:
+            app = VideoPipeline(camera_id=0)
+            app.run()
+        except KeyboardInterrupt:
+             print("\nDetenido")
+        except Exception as e:
+             print(f"Error: {e}")
+    
+    if __name__ == "__main__":
+        main()
