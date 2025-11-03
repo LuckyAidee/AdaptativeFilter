@@ -1,5 +1,4 @@
 import cv2
-from matplotlib.pyplot import box
 import numpy as np
 import time
 from multiprocessing import Process, Queue, Value
@@ -252,16 +251,16 @@ class AdaptiveFilter:
 
         if conditions["rain"]:
             output = self._apply_arr(frame)
-            self.active_filter = "ARR (Eliminación de lluvia)"
+            self.active_filter = "ARR"
         elif conditions["fog"]:
             output = self._apply_fvr(frame)
-            self.active_filter = "FVR (Corrección de neblina)"
+            self.active_filter = "FVR"
         elif conditions["low_light"]:
             output = self._apply_lime(frame)
-            self.active_filter = "LIME (Mejora de baja luz)"
+            self.active_filter = "LIME"
         else:
             output = frame.copy()
-            self.active_filter = "Ninguno"
+            self.active_filter = "Sin filtro"
 
         self.times.append(time.time() - start)
         return output
