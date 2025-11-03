@@ -141,13 +141,17 @@ class AdaptiveFilter:
                 rain = True
                 rain_conf = 0.9
 
-        # Los valores son más estables y compatibles.
+        # Valores más estables y compatibles.
         return {
-            "low_light": bool(low_light),
-            "fog": bool(fog),
-            "rain": bool(rain),
-            "brightness": brightness,
-            "blur": lap_var
+            'low_light': bool(low_light),
+            'fog': bool(fog),
+            'rain': bool(rain),
+            'brightness_value': brightness,
+            'blur_value': lap_var,
+            'rain_score': rain_conf if 'rain_conf' in locals() else 0.0,
+            'low_light_confidence': low_light_conf,
+            'fog_confidence': fog_conf if 'fog_conf' in locals() else 0.0,
+            'rain_confidence': rain_conf if 'rain_conf' in locals() else 0.0
         }
     
     # Promedia las últimas detecciones para evitar cambios bruscos
@@ -268,8 +272,8 @@ class VideoPipeline:
     def __init__(self, camera_id=0):
 
         self.camera_id = camera_id
-        self.frame_queue = Queue(maxsize=8)
-        self.result_queue = Queue(maxsize=8)
+        self.frame_queue = Queue(maxsize=2)
+        self.result_queue = Queue(maxsize=2)
         self.running = Value('i', 0)
         self.processes = []
 
@@ -342,9 +346,8 @@ class VideoPipeline:
         y = 25
         cv2.putText(img, f"FPS: {self.current_fps:.0f} | {filter_used}", (15, y), font, fs, (255, 255, 255), th)
         y += 15
-        col = (255, 100, 100) if conditions.get("brightness", 100) < 85 else (255, 255, 255)
-        cv2.putText(img, f"Brillo: {conditions.get('brightness', 0):.0f}", (15, y), font, fs, col, th)
-
+        col = (255, 100, 100) if conditions["brightness_value"] < 85 else (255, 255, 255)
+        cv2.putText(img, f"Brillo: {conditions['brightness_value']:.0f}", (15, y), font, fs, col, th)
 
         # indicadores L/F/R
         yc = 60
