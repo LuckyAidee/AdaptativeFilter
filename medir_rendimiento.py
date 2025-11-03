@@ -175,3 +175,81 @@ def print_results(self):
             print(f"✗ Throughput: {self.results['parallel']['fps']:.1f} FPS (Objetivo: ≥15 FPS)")
         
         print("=" * 70)
+
+def plot_results(self):
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        fig.suptitle('Análisis de Rendimiento: Secuencial vs Paralelo', fontsize=16)
+        
+        ax1 = axes[0, 0]
+        categories = ['Secuencial', 'Paralelo']
+        times_ms = [
+            self.results['sequential']['avg_time'] * 1000,
+            self.results['parallel']['avg_time'] * 1000
+        ]
+        colors = ['#FF6B6B', '#4ECDC4']
+        bars = ax1.bar(categories, times_ms, color=colors, alpha=0.7)
+        ax1.set_ylabel('Tiempo (ms/frame)')
+        ax1.set_title('Tiempo de Procesamiento por Frame')
+        ax1.grid(axis='y', alpha=0.3)
+        
+        for bar in bars:
+            height = bar.get_height()
+            ax1.text(bar.get_x() + bar.get_width()/2., height,
+                     f'{height:.1f}ms', ha='center', va='bottom')
+        
+        ax2 = axes[0, 1]
+        fps_values = [
+            self.results['sequential']['fps'],
+            self.results['parallel']['fps']
+        ]
+        bars = ax2.bar(categories, fps_values, color=colors, alpha=0.7)
+        ax2.set_ylabel('Frames por Segundo')
+        ax2.set_title('Throughput (FPS)')
+        ax2.axhline(y=15, color='green', linestyle='--', label='Objetivo: 15 FPS')
+        ax2.grid(axis='y', alpha=0.3)
+        ax2.legend()
+        
+        for bar in bars:
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height,
+                     f'{height:.1f}', ha='center', va='bottom')
+        
+        ax3 = axes[1, 0]
+        speedup = self.results['speedup']
+        ideal_speedup = self.results['num_threads']
+        
+        x = ['Speedup\nObtenido', 'Speedup\nIdeal']
+        y = [speedup, ideal_speedup]
+        colors_speedup = ['#4ECDC4', '#FFE66D']
+        bars = ax3.bar(x, y, color=colors_speedup, alpha=0.7)
+        ax3.set_ylabel('Speedup')
+        ax3.set_title('Speedup vs Ideal')
+        ax3.grid(axis='y', alpha=0.3)
+        
+        for bar in bars:
+            height = bar.get_height()
+            ax3.text(bar.get_x() + bar.get_width()/2., height,
+                     f'{height:.2f}x', ha='center', va='bottom')
+        
+        ax4 = axes[1, 1]
+        efficiency = self.results['efficiency'] * 100
+        ideal_efficiency = 100
+        
+        x = ['Eficiencia\nObtenida', 'Eficiencia\nIdeal']
+        y = [efficiency, ideal_efficiency]
+        colors_eff = ['#4ECDC4', '#FFE66D']
+        bars = ax4.bar(x, y, color=colors_eff, alpha=0.7)
+        ax4.set_ylabel('Eficiencia (%)')
+        ax4.set_title('Eficiencia del Paralelismo')
+        ax4.set_ylim([0, 110])
+        ax4.grid(axis='y', alpha=0.3)
+        
+        for bar in bars:
+            height = bar.get_height()
+            ax4.text(bar.get_x() + bar.get_width()/2., height,
+                     f'{height:.1f}%', ha='center', va='bottom')
+        
+        plt.tight_layout()
+        plt.savefig('performance_results.png', dpi=300, bbox_inches='tight')
+        print("\nGráficas guardadas en: performance_results.png")
+        plt.show()
