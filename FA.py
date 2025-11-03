@@ -101,23 +101,30 @@ class AdaptiveFilter:
 
         h, w = frame.shape[:2]
         small = cv2.resize(frame, (int(w * 0.6), int(h * 0.6)))
-        img = small.astype(np.float64) / 255.0
+        img = small.astype(np.float64) / 255.0  # Normalizamos valores de 0 a 1
 
+        #Estimamos la luz luz blanca que rebota en la niebla
         airlight = np.percentile(small, 95, axis=(0, 1))
+
         dark_channel = np.min(img, axis=2)
 
+        # Se suaviza píxel más oscuro para eliminar ruido 
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (10, 10))
-        dark_channel = cv2.morphologyEx(dark_channel, cv2.MORPH_ERODE, kernel)
+        dark = cv2.morphologyEx(dark, cv2.MORPH_ERODE, kernel)
 
-        transmission = 1 - 0.95 * dark_channel / (airlight.max() / 255.0)
-        transmission = np.maximum(transmission, 0.2)
+        # Se Calcula cuánta luz atraviesa la niebla
+        # Si el dark channel es grande = poca niebla y si es chico = mucha dispersión
+        transmission = 1 - 0.95 * dark / (airlight.max() / 255.0) 
+        transmission = np.maximum(transmission, 0.2)  
 
-        restored = np.zeros_like(img)
+        # Restauramos la imagen aplicando la ecuación de dispersión atmosférica
+        res = np.zeros_like(img)
         for i in range(3):
-            restored[:, :, i] = (img[:, :, i] - airlight[i] / 255.0) / transmission + airlight[i] / 255.0
+            res[:, :, i] = (img[:, :, i] - airlight[i] / 255.0) / transmission + airlight[i] / 255.0
 
-        result = np.clip(restored * 255, 0, 255).astype(np.uint8)
-        return cv2.resize(result, (w, h))
+        res = np.clip(res * 255, 0, 255).astype(np.uint8)
+
+        return cv2.resize(res, (w, h))
     
     #ARR: Elimina lluvia mediante filtrado morfológico e inpainting
     def _apply_arr(self, frame):
@@ -127,7 +134,9 @@ class AdaptiveFilter:
         kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
         rain_mask = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel_v)
 
+        # Binarizamos con Otsu (separa fondo y gotas)
         _, rain_mask = cv2.threshold(rain_mask, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
         kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
         rain_mask = cv2.dilate(rain_mask, kernel_dilate, iterations=1)
 
