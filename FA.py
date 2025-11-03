@@ -57,6 +57,97 @@ class AdaptiveFilter:
         hist_norm = hist / (hist.sum() if hist.sum() > 0 else 1.0)
         dark_pixels = float(np.sum(hist_norm[:64]))     # Porcentaje de píxeles muy oscuros
         bright_pixels = float(np.sum(hist_norm[192:]))  # Porcentaje de píxeles muy claros
+
+        
+        # Detección de BAJA ILUMINACIÓN mas robusto, usamos varias condiciones 
+        low_light_flags = [
+            brightness < 60, # brillo global 
+            center_brightness < 50,
+            dark_pixels > 0.80,
+            bright_pixels < 0.03, # pocos píxeles claros
+            noise_level > 25 # ruido elevado (lo que pasa en imágenes oscuras)
+        ]
+
+        low_light_conf = sum(low_light_flags) / len(low_light_flags)  # confianza (0–1)
+
+        # Si la imagen es muy oscura y tiene píxeles oscuros, aumentamos confianza.
+        if brightness < 60 and dark_pixels > 0.7:
+            low_light_conf = min(low_light_conf + 0.3, 1.0)
+
+        # Si el brillo es bajo o la confianza supera 0.6 tenemos baja luz.
+        low_light = (brightness < 85) or (low_light_conf >= 0.6)
+
+        # Detección de NIEBLA mas robusta
+        # La niebla suaviza bordes, reduce contraste y saturación.
+        # Usamos una combinación de variancia Laplaciana (borde), Sobel (contraste), y saturación.
+        lap_var = float(cv2.Laplacian(center, cv2.CV_64F).var())  # “nitidez” local de cada imagen
+        fog = False
+        if brightness > 70:
+            sobelx = cv2.Sobel(center, cv2.CV_64F, 1, 0, ksize=3)
+            sobely = cv2.Sobel(center, cv2.CV_64F, 0, 1, ksize=3)
+            sobel_mean = float(np.mean(np.abs(sobelx) + np.abs(sobely))) # bordes promedio
+            local_std = float(np.std(center)) # contraste local
+            avg_sat = float(np.mean(hsv[:, :, 1])) # saturación media
+
+            # Si todos estos valores son bajos probablemente hay niebla.
+            fog_flags = [
+                lap_var < 500, # poca nitidez
+                sobel_mean < 20, # pocos bordes fuertes
+                local_std < 35, # bajo contraste
+                avg_sat < 120, # saturación baja
+                brightness > 50 # suficientemente iluminada
+            ]
+            fog_conf = sum(fog_flags) / len(fog_flags)
+            fog = (fog_conf >= 0.7) and (brightness >= 75) and (low_light_conf < 0.2)
+        else:
+            fog_conf = 0.0
+        
+        # Detección de LLUVIA mas robusta 
+        # Buscamos líneas verticales finas (goteras o trazos de lluvia).
+        # Si hay muchas y el brillo es medio-alto, puede ser lluvia real.
+        rain = False
+        rain_conf = 0.0
+        if brightness > 60 and noise_level < 20 and low_light_conf < 0.4:
+            gray_blur = cv2.medianBlur(gray, 3)  # suaviza sin borrar líneas finas
+            edges = cv2.Canny(gray_blur, 40, 120)
+            lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 15, minLineLength=20, maxLineGap=5)
+
+            vertical = 0
+            diagonal = 0
+            if lines is not None:
+                for (x1, y1, x2, y2) in lines[:, 0]:
+                    length = np.hypot(x2 - x1, y2 - y1)
+                    ang = abs(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+                    # Líneas casi verticales (goteras)
+                    if 85 <= ang <= 95 and length > 20:
+                        vertical += 1
+                    # Líneas algo inclinadas (por movimiento o viento)
+                    elif 70 <= ang <= 110 and length > 25:
+                        diagonal += 1
+
+            total_rel = vertical + diagonal
+            density = (total_rel / len(lines)) if (lines is not None and len(lines) > 0) else 0.0
+
+            # Condiciones mínimas para considerar lluvia real
+            rain_flags = [
+                vertical >= 12, # suficientes líneas verticales
+                density > 0.6, # alta proporción de líneas relevantes
+                brightness > 60, # suficientemente iluminada
+                noise_level < 15, # imagen estable
+                low_light_conf < 0.3 # no es oscuridad
+            ]
+            if all(rain_flags):
+                rain = True
+                rain_conf = 0.9
+
+        # Los valores son más estables y compatibles.
+        return {
+            "low_light": bool(low_light),
+            "fog": bool(fog),
+            "rain": bool(rain),
+            "brightness": brightness,
+            "blur": lap_var
+        }
     
     # Promedia las últimas detecciones para evitar cambios bruscos
     def _smooth_conditions(self, conditions):
