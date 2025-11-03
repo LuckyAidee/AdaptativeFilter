@@ -51,6 +51,12 @@ class AdaptiveFilter:
         brightness = float(np.mean(gray))           # Brillo general
         center_brightness = float(np.mean(center))  # Brillo del centro del frame
         noise_level = float(np.std(center))         # Variación de intensidad (ruido)
+
+        # Hacemos un Análisis del histograma de intensidad
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
+        hist_norm = hist / (hist.sum() if hist.sum() > 0 else 1.0)
+        dark_pixels = float(np.sum(hist_norm[:64]))     # Porcentaje de píxeles muy oscuros
+        bright_pixels = float(np.sum(hist_norm[192:]))  # Porcentaje de píxeles muy claros
     
     # Promedia las últimas detecciones para evitar cambios bruscos
     def _smooth_conditions(self, conditions):
