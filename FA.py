@@ -167,8 +167,8 @@ class AdaptiveFilter:
             out[key] = votes >= (len(self.history) // 2)
 
         # Métricas continuas: última medición (rápido y consistente)
-        out["brightness"] = conditions.get("brightness", 0.0)
-        out["blur"] = conditions.get("blur", 0.0)
+        out["brightness_value"] = conditions.get("brightness_value", conditions.get("brightness", 0.0))
+        out["blur_value"] = conditions.get("blur_value", conditions.get("blur", 0.0))
         return out
     
     #LIME: Mejora zonas oscuras en condiciones de poca luz.
@@ -211,11 +211,11 @@ class AdaptiveFilter:
 
         # Se suaviza píxel más oscuro para eliminar ruido 
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (10, 10))
-        dark = cv2.morphologyEx(dark, cv2.MORPH_ERODE, kernel)
+        dark = cv2.morphologyEx(dark_channel, cv2.MORPH_ERODE, kernel)
 
         # Se Calcula cuánta luz atraviesa la niebla
         # Si el dark channel es grande = poca niebla y si es chico = mucha dispersión
-        transmission = 1 - 0.95 * dark / (airlight.max() / 255.0) 
+        transmission = 1 - 0.95 * dark / (airlight.max() / 255.0)
         transmission = np.maximum(transmission, 0.2)  
 
         # Restauramos la imagen aplicando la ecuación de dispersión atmosférica
@@ -286,6 +286,14 @@ class VideoPipeline:
     @staticmethod
     def capture_process(camera_id, frame_queue, running):
         cap = cv2.VideoCapture(camera_id)
+        
+        #Menor latencia entre lo que pasa y lo que se ve 
+
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)     # ancho
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)    # alto
+        cap.set(cv2.CAP_PROP_FPS, 30)              # frames por segundo
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)        # buffer mínimo (menos retraso)
+
         try:
             while running.value == 1:
                 ok, frame = cap.read()
@@ -346,8 +354,11 @@ class VideoPipeline:
         y = 25
         cv2.putText(img, f"FPS: {self.current_fps:.0f} | {filter_used}", (15, y), font, fs, (255, 255, 255), th)
         y += 15
-        col = (255, 100, 100) if conditions["brightness_value"] < 85 else (255, 255, 255)
-        cv2.putText(img, f"Brillo: {conditions['brightness_value']:.0f}", (15, y), font, fs, col, th)
+
+        #Acceso seguro al brillo
+        val_bright = conditions.get("brightness_value", conditions.get("brightness", 0.0))
+        col = (255, 100, 100) if val_bright < 85 else (255, 255, 255)
+        cv2.putText(img, f"Brillo: {val_bright:.0f}", (15, y), font, fs, col, th)
 
         # indicadores L/F/R
         yc = 60
