@@ -73,20 +73,28 @@ class AdaptiveFilter:
     #LIME: Mejora zonas oscuras en condiciones de poca luz.
     def _apply_lime(self, frame):
 
+         # Se Reduce la resolución para poder procesar mas rapido
         h, w = frame.shape[:2]
-        small = cv2.resize(frame, (int(w * 0.5), int(h * 0.5)))
-        img = small.astype(np.float32) / 255.0
+        small = cv2.resize(frame, (w // 2, h // 2))
+        img = small.astype(np.float32) / 255.0 # Normalizamos valores de 0 a 1
 
+        # Tomamos la imagen en escala de grises para poder representar la intensidad de la luz
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-        illumination = cv2.bilateralFilter(gray, 5, 100, 100)
-        illumination = np.clip(illumination.astype(np.float32) / 255.0, 0.2, 1.0)
 
-        enhanced = np.zeros_like(img)
+        # Suavizamos para separar sombras y luz
+        illumination = cv2.bilateralFilter(gray, 5, 80, 80).astype(np.float32) / 255.0
+
+        # Limitamos los valores de iluminación para evitar divisiones extremas
+        illumination = np.clip(illumination, 0.2, 1.0)
+
+        # Realzamos la imagen canal por canal sin quemar zonas brillantes
+        out = np.zeros_like(img)
         for i in range(3):
-            enhanced[:, :, i] = np.power(img[:, :, i] / illumination, 0.6)
+            out[:, :, i] = np.power(img[:, :, i] / illumination, 0.6)
 
-        enhanced = np.clip(enhanced * 255, 0, 255).astype(np.uint8)
-        return cv2.resize(enhanced, (w, h))
+        # Devolvemos a rango [0,255] y reescalamos al tamaño original
+        out = np.clip(out * 255, 0, 255).astype(np.uint8)
+        return cv2.resize(out, (w, h))
     
     #FVR: Reducir la neblina
     def _apply_fvr(self, frame):
