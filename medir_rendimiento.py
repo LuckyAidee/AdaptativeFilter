@@ -253,3 +253,64 @@ def plot_results(self):
         plt.savefig('performance_results.png', dpi=300, bbox_inches='tight')
         print("\nGráficas guardadas en: performance_results.png")
         plt.show()
+
+def save_results(self, filename='performance_results.json'):
+        save_data = {
+            'sequential': {
+                'avg_time_ms': self.results['sequential']['avg_time'] * 1000,
+                'fps': self.results['sequential']['fps']
+            },
+            'parallel': {
+                'avg_time_ms': self.results['parallel']['avg_time'] * 1000,
+                'fps': self.results['parallel']['fps']
+            },
+            'speedup': self.results['speedup'],
+            'efficiency': self.results['efficiency'] * 100,
+            'latency_reduction': self.results['latency_reduction'],
+            'num_threads': self.results['num_threads'],
+            'num_frames_tested': self.num_frames
+        }
+        
+        with open(filename, 'w') as f:
+            json.dump(save_data, f, indent=4)
+        
+        print(f"\nResultados guardados en: {filename}")
+
+
+def main():
+    print("=" * 70)
+    print("ANÁLISIS DE RENDIMIENTO - MULTIPROCESSING")
+    print("=" * 70)
+    print("\nEste script medirá:")
+    print("  1. Tiempo de procesamiento (Secuencial - requiere SequentialBaseline)")
+    print("  2. Tiempo de procesamiento (Paralelo - 2 procesos, requiere ParallelPipelineDetector)")
+    print("  3. Speedup = T_secuencial / T_paralelo")
+    print("  4. Eficiencia = Speedup / Núm_procesos")
+    print("\nNúmero de frames a procesar: 100")
+    print("=" * 70)
+    
+    input("\nPresiona ENTER para comenzar la medición (Asegúrate de que las dependencias estén instaladas)...")
+    
+    analyzer = PerformanceAnalyzer(num_frames=100)
+    
+    analyzer.measure_sequential(video_source=0)
+    
+    print("\nEsperando 3 segundos antes de la siguiente medición...")
+    time.sleep(3)
+    
+    analyzer.measure_parallel(video_source=0)
+    
+    analyzer.calculate_metrics()
+    
+    analyzer.print_results()
+    
+    analyzer.save_results()
+    
+    print("\nGenerando gráficas...")
+    analyzer.plot_results()
+    
+    print("\n¡Análisis completo!")
+
+
+if __name__ == "__main__":
+    main()
