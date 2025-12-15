@@ -223,6 +223,32 @@ class SequentialBaseline:
             self.current_fps = 30 / (now - self.fps_start_time)
             self.fps_start_time = now
 
+    def initialize_camera(self):
+        """Alias para _init_camera, usado por medir_rendimiento.py"""
+        self._init_camera()
+
+    def cleanup(self):
+        """Libera recursos de la cámara"""
+        if self.cap is not None:
+            self.cap.release()
+        cv2.destroyAllWindows()
+
+    def process_frame_sequential(self, frame):
+        """
+        Procesa un frame de forma secuencial y mide el tiempo.
+        Returns:
+            tuple: (frame_filtrado, condiciones, tiempo_procesamiento)
+        """
+        start_time = time.time()
+        
+        # Análisis y filtrado secuencial
+        cond_raw = self.af.analyze_frame(frame)
+        cond = self.af._smooth_conditions(cond_raw)
+        filtered = self.af.apply_filter(frame, cond)
+        
+        proc_time = time.time() - start_time
+        return filtered, cond, proc_time
+
     def _overlay(self, frame, conditions, filter_used):
         img = frame.copy()
         box = img.copy()

@@ -1,455 +1,657 @@
 import cv2
 import numpy as np
 import time
-from multiprocessing import Process, Queue, Value
+from multiprocessing import Process, Queue, Value, shared_memory
 from collections import deque
 from queue import Empty
 import os
 
-class AdaptiveFilter:
-     # Filtro adaptativo 
+class OptimizedAdaptiveFilter:
+    """
+    Filtro Adaptativo OPTIMIZADO con resolución reducida y algoritmos simplificados
+    """
+
     def __init__(self):
-        self.history = deque(maxlen=3)
-        self.times = []
-        self.active_filter = "none"
+        self.condition_history = deque(maxlen=3)
+        self.processing_times = []
+        self.current_filter = "none"
 
-        # Inicializa los kernels principales
-        self._init_kernels()
+        # OPTIMIZACIÓN: Pre-computar kernels
+        self.setup_kernels()
 
-        # Resolución reducida para análisis más rápido
-        self.resolution = (320, 240)
-      # Preparar los kernels base usados en los filtros.
-    def _init_kernels(self):
-        # Kernel de detección de bordes
-        self.edge_kernel = np.array([
-            [-1, -1, -1],
-            [-1,  8, -1],
-            [-1, -1, -1]
-        ], dtype=np.float32)
+        # OPTIMIZACIÓN: Resolución de análisis reducida
+        self.analysis_resolution = (320, 240)
 
-        # Kernel gaussiano
+    def setup_kernels(self):
+        """Pre-computa kernels optimizados (más pequeños)"""
+        self.edge_kernel = np.array([[-1, -1, -1],
+                                   [-1,  8, -1],
+                                   [-1, -1, -1]], dtype=np.float32)
+
         self.gaussian_kernel = cv2.getGaussianKernel(3, 0.5)
 
-        print("Kernels listos")
+        print("Filtros optimizados inicializados")
 
-     # Analiza el fotograma y estima condiciones de luz, niebla y lluvia.
-    def analyze_frame(self, frame):
+    def analyze_conditions(self, frame):
+        """Análisis OPTIMIZADO con resolución reducida"""
         start_time = time.time()
 
-        # Hacemos un preprocesamiento para reducir la resolución y hacemos una conversión de color
+        # OPTIMIZACIÓN 1: Reducir resolución para análisis
+        small_frame = cv2.resize(frame, self.analysis_resolution)
 
-        # Usamos una versión más pequeña del frame para procesar más rápido.
-        resized = cv2.resize(frame, self.resolution)
-        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-        hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
-
-        # Tomamos solo la región central (Aqui es donde hay más información útil)
+        gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
+        hsv = cv2.cvtColor(small_frame, cv2.COLOR_BGR2HSV)
         h, w = gray.shape
-        center = gray[h // 4: 3 * h // 4, w // 4: 3 * w // 4]
 
-        #Realizamos un calculo de de luz y ruido
-        brightness = float(np.mean(gray))           # Brillo general
-        center_brightness = float(np.mean(center))  # Brillo del centro del frame
-        noise_level = float(np.std(center))         # Variación de intensidad (ruido)
+        center_region = gray[h//4:3*h//4, w//4:3*w//4]
 
-        # Hacemos un Análisis del histograma de intensidad
-        hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
-        hist_norm = hist / (hist.sum() if hist.sum() > 0 else 1.0)
-        dark_pixels = float(np.sum(hist_norm[:64]))     # Porcentaje de píxeles muy oscuros
-        bright_pixels = float(np.sum(hist_norm[192:]))  # Porcentaje de píxeles muy claros
+        # Métricas de iluminación
+        global_brightness = np.mean(gray)
+        center_brightness = np.mean(center_region)
 
-        
-        # Detección de BAJA ILUMINACIÓN mas robusto, usamos varias condiciones 
-        low_light_flags = [
-            brightness < 60, # brillo global 
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+        hist_norm = hist.flatten() / hist.sum()
+
+        dark_pixels = np.sum(hist_norm[:64])
+        bright_pixels = np.sum(hist_norm[192:])
+        noise_level = np.std(center_region)
+
+        # Detección de baja iluminación
+        low_light_criteria = [
+            global_brightness < 60,
             center_brightness < 50,
             dark_pixels > 0.80,
-            bright_pixels < 0.03, # pocos píxeles claros
-            noise_level > 25 # ruido elevado (lo que pasa en imágenes oscuras)
+            bright_pixels < 0.03,
+            noise_level > 25
         ]
+        low_light_confidence = sum(low_light_criteria) / len(low_light_criteria)
 
-        low_light_conf = sum(low_light_flags) / len(low_light_flags)  # confianza (0–1)
+        if global_brightness < 60 and dark_pixels > 0.7:
+            low_light_confidence = min(low_light_confidence + 0.3, 1.0)
 
-        # Si la imagen es muy oscura y tiene píxeles oscuros, aumentamos confianza.
-        if brightness < 60 and dark_pixels > 0.7:
-            low_light_conf = min(low_light_conf + 0.3, 1.0)
+        # Detección de niebla
+        laplacian_var = cv2.Laplacian(center_region, cv2.CV_64F).var()
 
-        # Si el brillo es bajo o la confianza supera 0.6 tenemos baja luz.
-        low_light = (brightness < 85) or (low_light_conf >= 0.6)
+        fog_confidence = 0.0
+        if global_brightness > 70:
+            sobelx = cv2.Sobel(center_region, cv2.CV_64F, 1, 0, ksize=3)
+            sobely = cv2.Sobel(center_region, cv2.CV_64F, 0, 1, ksize=3)
+            sobel_mean = np.mean(np.abs(sobelx) + np.abs(sobely))
 
-        # Detección de NIEBLA mas robusta
-        # La niebla suaviza bordes, reduce contraste y saturación.
-        # Usamos una combinación de variancia Laplaciana (borde), Sobel (contraste), y saturación.
-        lap_var = float(cv2.Laplacian(center, cv2.CV_64F).var())  # “nitidez” local de cada imagen
-        fog = False
-        if brightness > 70:
-            sobelx = cv2.Sobel(center, cv2.CV_64F, 1, 0, ksize=3)
-            sobely = cv2.Sobel(center, cv2.CV_64F, 0, 1, ksize=3)
-            sobel_mean = float(np.mean(np.abs(sobelx) + np.abs(sobely))) # bordes promedio
-            local_std = float(np.std(center)) # contraste local
-            avg_sat = float(np.mean(hsv[:, :, 1])) # saturación media
+            local_std = np.std(center_region)
+            avg_saturation = np.mean(hsv[:, :, 1])
 
-            # Si todos estos valores son bajos probablemente hay niebla.
-            fog_flags = [
-                lap_var < 500, # poca nitidez
-                sobel_mean < 20, # pocos bordes fuertes
-                local_std < 35, # bajo contraste
-                avg_sat < 120, # saturación baja
-                brightness > 50 # suficientemente iluminada
+            fog_criteria = [
+                laplacian_var < 500,
+                sobel_mean < 20,
+                local_std < 35,
+                avg_saturation < 120,
+                global_brightness > 50
             ]
-            fog_conf = sum(fog_flags) / len(fog_flags)
-            fog = (fog_conf >= 0.7) and (brightness >= 75) and (low_light_conf < 0.2)
-        else:
-            fog_conf = 0.0
-        
-        # Detección de LLUVIA mas robusta 
-        # Buscamos líneas verticales finas (goteras o trazos de lluvia).
-        # Si hay muchas y el brillo es medio-alto, puede ser lluvia real.
-        rain = False
-        rain_conf = 0.0
-        if brightness > 60 and noise_level < 20 and low_light_conf < 0.4:
-            gray_blur = cv2.medianBlur(gray, 3)  # suaviza sin borrar líneas finas
-            edges = cv2.Canny(gray_blur, 40, 120)
-            lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 15, minLineLength=20, maxLineGap=5)
+            fog_confidence = sum(fog_criteria) / len(fog_criteria)
 
-            vertical = 0
-            diagonal = 0
+        # Detección de lluvia
+        rain_confidence = 0.0
+        rain_features = {'vertical_lines': 0, 'short_segments': 0, 'density_score': 0}
+
+        if global_brightness > 60 and noise_level < 20 and low_light_confidence < 0.4:
+            filtered_gray = cv2.medianBlur(gray, 3)
+            edges = cv2.Canny(filtered_gray, 40, 120)
+
+            lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=15,
+                                   minLineLength=20, maxLineGap=5)
+
             if lines is not None:
-                for (x1, y1, x2, y2) in lines[:, 0]:
-                    length = np.hypot(x2 - x1, y2 - y1)
-                    ang = abs(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
-                    # Líneas casi verticales (goteras)
-                    if 85 <= ang <= 95 and length > 20:
-                        vertical += 1
-                    # Líneas algo inclinadas (por movimiento o viento)
-                    elif 70 <= ang <= 110 and length > 25:
-                        diagonal += 1
+                vertical_lines = 0
+                diagonal_lines = 0
 
-            total_rel = vertical + diagonal
-            density = (total_rel / len(lines)) if (lines is not None and len(lines) > 0) else 0.0
+                for line in lines:
+                    x1, y1, x2, y2 = line[0]
+                    length = np.sqrt((x2-x1)**2 + (y2-y1)**2)
+                    angle = abs(np.arctan2(y2-y1, x2-x1) * 180 / np.pi)
 
-            # Condiciones mínimas para considerar lluvia real
-            rain_flags = [
-                vertical >= 12, # suficientes líneas verticales
-                density > 0.6, # alta proporción de líneas relevantes
-                brightness > 60, # suficientemente iluminada
-                noise_level < 15, # imagen estable
-                low_light_conf < 0.3 # no es oscuridad
+                    if 85 <= angle <= 95 and length > 20:
+                        vertical_lines += 1
+                    elif 70 <= angle <= 110 and length > 25:
+                        diagonal_lines += 1
+
+                rain_features['vertical_lines'] = vertical_lines
+                rain_features['diagonal_lines'] = diagonal_lines
+
+                if len(lines) > 0:
+                    relevant_lines = vertical_lines + diagonal_lines
+                    rain_features['density_score'] = relevant_lines / len(lines)
+
+            rain_criteria = [
+                rain_features['vertical_lines'] >= 12,
+                rain_features['density_score'] > 0.6,
+                global_brightness > 60,
+                noise_level < 15,
+                low_light_confidence < 0.3
             ]
-            if all(rain_flags):
-                rain = True
-                rain_conf = 0.9
 
-        # Valores más estables y compatibles.
-        return {
-            'low_light': bool(low_light),
-            'fog': bool(fog),
-            'rain': bool(rain),
-            'brightness_value': brightness,
-            'blur_value': lap_var,
-            'rain_score': rain_conf if 'rain_conf' in locals() else 0.0,
-            'low_light_confidence': low_light_conf,
-            'fog_confidence': fog_conf if 'fog_conf' in locals() else 0.0,
-            'rain_confidence': rain_conf if 'rain_conf' in locals() else 0.0
+            if all(rain_criteria):
+                rain_confidence = 0.9
+
+        # Decisión final
+        final_decisions = self.apply_decision_logic(
+            low_light_confidence, fog_confidence, rain_confidence,
+            global_brightness, laplacian_var, rain_features
+        )
+
+        conditions = {
+            'low_light': final_decisions['low_light'],
+            'fog': final_decisions['fog'],
+            'rain': final_decisions['rain'],
+            'brightness_value': global_brightness,
+            'blur_value': laplacian_var,
+            'rain_score': rain_confidence,
+            'low_light_confidence': low_light_confidence,
+            'fog_confidence': fog_confidence,
+            'rain_confidence': rain_confidence,
+            'processing_time': time.time() - start_time
         }
-    
-    # Promedia las últimas detecciones para evitar cambios bruscos
-    def _smooth_conditions(self, conditions):
 
-        self.history.append(conditions)
-        if len(self.history) < 2:
+        return conditions
+
+    def apply_decision_logic(self, low_light_conf, fog_conf, rain_conf, brightness, blur_val, rain_features):
+        """Lógica de decisión con prioridad LIME"""
+        decisions = {'low_light': False, 'fog': False, 'rain': False, 'combination': 'none'}
+
+        if brightness < 85 or low_light_conf >= 0.6:
+            decisions['low_light'] = True
+            decisions['combination'] = 'light_priority'
+            return decisions
+
+        if (rain_conf >= 0.85 and brightness >= 70 and low_light_conf < 0.3 and
+            rain_features.get('vertical_lines', 0) >= 12):
+            decisions['rain'] = True
+            decisions['combination'] = 'rain_confirmed'
+            return decisions
+
+        if (fog_conf >= 0.7 and brightness >= 75 and low_light_conf < 0.2 and rain_conf < 0.3):
+            decisions['fog'] = True
+            decisions['combination'] = 'fog_clear'
+            return decisions
+
+        decisions['combination'] = 'normal_conditions'
+        return decisions
+
+    def temporal_smoothing(self, conditions):
+        """Suavizado temporal para evitar cambios abruptos"""
+        self.condition_history.append(conditions)
+
+        if len(self.condition_history) < 2:
             return conditions
 
-        out = {}
-        for key in ("low_light", "fog", "rain"):
-            votes = sum(1 for c in self.history if c.get(key))
-            out[key] = votes >= (len(self.history) // 2)
+        avg_conditions = {}
+        for key in ['low_light', 'fog', 'rain']:
+            votes = sum(1 for c in self.condition_history if c[key])
+            avg_conditions[key] = votes >= len(self.condition_history) // 2
 
-        # Métricas continuas: última medición (rápido y consistente)
-        out["brightness_value"] = conditions.get("brightness_value", conditions.get("brightness", 0.0))
-        out["blur_value"] = conditions.get("blur_value", conditions.get("blur", 0.0))
-        return out
-    
-    #LIME: Mejora zonas oscuras en condiciones de poca luz.
-    def _apply_lime(self, frame):
+        avg_conditions.update({
+            'brightness_value': conditions['brightness_value'],
+            'blur_value': conditions['blur_value'],
+            'rain_score': conditions['rain_score'],
+            'low_light_confidence': conditions['low_light_confidence'],
+            'fog_confidence': conditions['fog_confidence'],
+            'rain_confidence': conditions['rain_confidence']
+        })
 
-         # Se Reduce la resolución para poder procesar mas rapido
+        return avg_conditions
+
+    def apply_LIME_optimized(self, frame):
+        """LIME OPTIMIZADO - Procesa en resolución menor y escala"""
         h, w = frame.shape[:2]
-        small = cv2.resize(frame, (w // 2, h // 2))
-        img = small.astype(np.float32) / 255.0 # Normalizamos valores de 0 a 1
+        small = cv2.resize(frame, (w//2, h//2))
 
-        # Tomamos la imagen en escala de grises para poder representar la intensidad de la luz
-        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        img_float = small.astype(np.float64) / 255.0
 
-        # Suavizamos para separar sombras y luz
-        illumination = cv2.bilateralFilter(gray, 5, 80, 80).astype(np.float32) / 255.0
+        gray = cv2.cvtColor((img_float * 255).astype(np.uint8), cv2.COLOR_BGR2GRAY)
 
-        # Limitamos los valores de iluminación para evitar divisiones extremas
-        illumination = np.clip(illumination, 0.2, 1.0)
+        illumination = cv2.bilateralFilter(gray, 5, 80, 80)
+        illumination = illumination.astype(np.float64) / 255.0
+        illumination = np.maximum(illumination, 0.2)
 
-        # Realzamos la imagen canal por canal sin quemar zonas brillantes
-        out = np.zeros_like(img)
+        enhanced = np.zeros_like(img_float)
         for i in range(3):
-            out[:, :, i] = np.power(img[:, :, i] / illumination, 0.6)
+            channel = img_float[:, :, i]
+            enhanced[:, :, i] = np.power(channel / illumination[:, :, np.newaxis].squeeze(), 0.2)
 
-        # Devolvemos a rango [0,255] y reescalamos al tamaño original
-        out = np.clip(out * 255, 0, 255).astype(np.uint8)
-        return cv2.resize(out, (w, h))
-    
-    #FVR: Reducir la neblina
-    def _apply_fvr(self, frame):
+        enhanced = np.power(enhanced, 1.2)
+        enhanced = np.clip(enhanced, 0, 0.75)
 
+        blend_ratio = 0.3
+        enhanced = enhanced * blend_ratio + img_float * (1 - blend_ratio)
+        enhanced = np.clip(enhanced * 255, 0, 255).astype(np.uint8)
+
+        enhanced = cv2.resize(enhanced, (w, h))
+
+        return enhanced
+
+    def apply_FVR_optimized(self, frame):
+        """FVR OPTIMIZADO - Eliminación rápida de niebla"""
         h, w = frame.shape[:2]
-        small = cv2.resize(frame, (int(w * 0.6), int(h * 0.6)))
-        img = small.astype(np.float64) / 255.0  # Normalizamos valores de 0 a 1
+        small = cv2.resize(frame, (int(w*0.6), int(h*0.6)))
 
-        #Estimamos la luz luz blanca que rebota en la niebla
+        img_float = small.astype(np.float64) / 255.0
+
         airlight = np.percentile(small, 95, axis=(0, 1))
+        dark_channel = np.min(img_float, axis=2)
 
-        dark_channel = np.min(img, axis=2)
-
-        # Se suaviza píxel más oscuro para eliminar ruido 
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (10, 10))
-        dark = cv2.morphologyEx(dark_channel, cv2.MORPH_ERODE, kernel)
+        dark_channel = cv2.morphologyEx(dark_channel, cv2.MORPH_ERODE, kernel)
 
-        # Se Calcula cuánta luz atraviesa la niebla
-        # Si el dark channel es grande = poca niebla y si es chico = mucha dispersión
-        transmission = 1 - 0.95 * dark / (airlight.max() / 255.0)
-        transmission = np.maximum(transmission, 0.2)  
+        transmission = 1 - 0.95 * dark_channel / (airlight.max() / 255.0)
+        transmission = np.maximum(transmission, 0.2)
 
-        # Restauramos la imagen aplicando la ecuación de dispersión atmosférica
-        res = np.zeros_like(img)
+        result = np.zeros_like(img_float)
         for i in range(3):
-            res[:, :, i] = (img[:, :, i] - airlight[i] / 255.0) / transmission + airlight[i] / 255.0
+            result[:, :, i] = (img_float[:, :, i] - airlight[i]/255.0) / transmission + airlight[i]/255.0
 
-        res = np.clip(res * 255, 0, 255).astype(np.uint8)
+        result = np.clip(result * 255, 0, 255).astype(np.uint8)
+        result = cv2.resize(result, (w, h))
 
-        return cv2.resize(res, (w, h))
-    
-    #ARR: Elimina lluvia mediante filtrado morfológico e inpainting
-    def _apply_arr(self, frame):
+        return result
 
+    def apply_ARR_optimized(self, frame):
+        """ARR OPTIMIZADO - Eliminación rápida de lluvia"""
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
-        rain_mask = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel_v)
+        kernel_vertical = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
+        rain_mask = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel_vertical)
 
-        # Binarizamos con Otsu (separa fondo y gotas)
         _, rain_mask = cv2.threshold(rain_mask, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
         kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
         rain_mask = cv2.dilate(rain_mask, kernel_dilate, iterations=1)
 
-        clean = cv2.inpaint(frame, rain_mask, 3, cv2.INPAINT_TELEA)
-        smooth = cv2.bilateralFilter(clean, 5, 50, 50)
-        return smooth
-    
-    # Seleccionar y aplicar el filtro adecuado según las condiciones
+        result = cv2.inpaint(frame, rain_mask, 3, cv2.INPAINT_TELEA)
+        result = cv2.bilateralFilter(result, 5, 50, 50)
+
+        return result
+
     def apply_filter(self, frame, conditions):
+        """Aplicar filtro optimizado según condiciones"""
+        start_time = time.time()
 
-        start = time.time()
-
-        if conditions["rain"]:
-            output = self._apply_arr(frame)
-            self.active_filter = "ARR"
-        elif conditions["fog"]:
-            output = self._apply_fvr(frame)
-            self.active_filter = "FVR"
-        elif conditions["low_light"]:
-            output = self._apply_lime(frame)
-            self.active_filter = "LIME"
+        if conditions['rain']:
+            filtered_frame = self.apply_ARR_optimized(frame)
+            self.current_filter = "ARR (Rain Removal)"
+        elif conditions['fog']:
+            filtered_frame = self.apply_FVR_optimized(frame)
+            self.current_filter = "FVR (Fog Removal)"
+        elif conditions['low_light']:
+            filtered_frame = self.apply_LIME_optimized(frame)
+            self.current_filter = "LIME (Low Light)"
         else:
-            output = frame.copy()
-            self.active_filter = "Sin filtro"
+            filtered_frame = frame.copy()
+            self.current_filter = "Sin filtro"
 
-        self.times.append(time.time() - start)
-        return output
+        processing_time = time.time() - start_time
+        self.processing_times.append(processing_time)
 
-class VideoPipeline:
+        if len(self.processing_times) > 100:
+            self.processing_times = self.processing_times[-100:]
 
-    # Dirige la captura y procesamiento en 2 procesos.
-    def __init__(self, camera_id=0):
+        return filtered_frame
 
+
+class ParallelPipelineDetector:
+    """
+    Sistema con PIPELINE DE 2 PROCESOS con optimizaciones:
+    - Proceso 1: Captura de frames
+    - Proceso 2: Procesamiento completo (Análisis + Filtrado + Suavizado)
+
+    OPTIMIZACIONES APLICADAS:
+    1. Queue size aumentado de 2 → 10
+    2. Timeouts aumentados de 0.01 → 0.05
+    3. Shared memory para evitar copiar frames
+    """
+
+    def __init__(self, camera_id=0, use_shared_memory=True):
         self.camera_id = camera_id
-        self.frame_queue = Queue(maxsize=2)
-        self.result_queue = Queue(maxsize=2)
+        self.cap = None
+        self.adaptive_filter = OptimizedAdaptiveFilter()
+        self.use_shared_memory = use_shared_memory
+
+        # OPTIMIZACIÓN 1: Aumentar queue size para mejor pipelining
+        self.frame_queue = Queue(maxsize=10)
+        self.result_queue = Queue(maxsize=10)
+
         self.running = Value('i', 0)
+
+        # OPTIMIZACIÓN 3: Shared Memory para frames
+        self.shm_buffers = []
+        self.shm_index = Value('i', 0)
+        if use_shared_memory:
+            self._setup_shared_memory()
+
+        self.fps_counter = 0
+        self.fps_start_time = time.time()
+        self.current_fps = 0
+
         self.processes = []
 
-        # FPS/UI
-        self.fps_counter = 0
-        self.current_fps = 0.0
-        self.fps_start_time = time.time()
-    
-    # Procesos 
-    @staticmethod
-    def capture_process(camera_id, frame_queue, running):
-        cap = cv2.VideoCapture(camera_id)
-        
-        #Menor latencia entre lo que pasa y lo que se ve 
-
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)     # ancho
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)    # alto
-        cap.set(cv2.CAP_PROP_FPS, 30)              # frames por segundo
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)        # buffer mínimo (menos retraso)
-
+    def _setup_shared_memory(self):
+        """Configura buffers de shared memory para frames (640x480x3)"""
         try:
-            while running.value == 1:
-                ok, frame = cap.read()
-                if not ok:
-                    time.sleep(0.01)
-                    continue
-                try:
-                    frame_queue.put(frame, timeout=0.02)
-                except Exception:
-                     # cola llena: descarta
-                     pass
-        finally:
-            cap.release()
-    
-    @staticmethod
-    def processing_process(frame_queue, result_queue, running):
-        af = AdaptiveFilter()  # instanciado en el proceso de cómputo
-        from queue import Empty
-        while running.value == 1:
-            try:
-                frame = frame_queue.get(timeout=0.05)
-                raw_cond = af.analyze_frame(frame)
-                cond = af._smooth_conditions(raw_cond)
-                out = af.apply_filter(frame, cond)
+            frame_size = 640 * 480 * 3
+            self.shm_buffers = []
 
-                data = {
-                    "original": frame,
-                    "filtered": out,
-                    "conditions": cond,
-                    "filter_used": af.active_filter
-                }
-                
+            for i in range(10):
                 try:
-                    result_queue.put(data, timeout=0.02)
+                    shm = shared_memory.SharedMemory(create=True, size=frame_size)
+                    self.shm_buffers.append({
+                        'shm': shm,
+                        'name': shm.name,
+                        'array': np.ndarray((480, 640, 3), dtype=np.uint8, buffer=shm.buf)
+                    })
+                except Exception as e:
+                    print(f"Warning: No se pudo crear shared memory buffer {i}: {e}")
+                    self.use_shared_memory = False
+                    self._cleanup_shared_memory()
+                    break
+
+            if self.use_shared_memory:
+                print(f"✓ Shared memory habilitada: {len(self.shm_buffers)} buffers de {frame_size/1024:.1f}KB")
+        except Exception as e:
+            print(f"Warning: Shared memory no disponible: {e}. Usando Queue estándar.")
+            self.use_shared_memory = False
+
+    def _cleanup_shared_memory(self):
+        """Limpia buffers de shared memory"""
+        for buf in self.shm_buffers:
+            try:
+                buf['shm'].close()
+                buf['shm'].unlink()
+            except:
+                pass
+        self.shm_buffers = []
+
+    def initialize_camera(self):
+        """Inicializar cámara optimizada"""
+        self.cap = cv2.VideoCapture(self.camera_id)
+
+        if not self.cap.isOpened():
+            raise Exception(f"No se pudo abrir la cámara {self.camera_id}")
+
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        print(f"Cámara: {int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}")
+
+    @staticmethod
+    def capture_process(camera_id, frame_queue, running, shm_buffers_info=None, shm_index=None):
+        """Proceso de captura de frames (con soporte para shared memory)"""
+        cap = cv2.VideoCapture(camera_id)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 30)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        use_shm = shm_buffers_info is not None and shm_index is not None
+        shm_arrays = []
+
+        if use_shm:
+            try:
+                for buf_info in shm_buffers_info:
+                    shm = shared_memory.SharedMemory(name=buf_info['name'])
+                    arr = np.ndarray((480, 640, 3), dtype=np.uint8, buffer=shm.buf)
+                    shm_arrays.append({'shm': shm, 'array': arr})
+            except Exception as e:
+                print(f"Warning: Shared memory no disponible en capture_process: {e}")
+                use_shm = False
+
+        while running.value == 1:
+            ret, frame = cap.read()
+            if ret:
+                try:
+                    if use_shm:
+                        # OPTIMIZACIÓN 3: Escribir directamente en shared memory
+                        idx = shm_index.value % len(shm_arrays)
+                        np.copyto(shm_arrays[idx]['array'], frame)
+                        # OPTIMIZACIÓN 2: Timeout aumentado
+                        frame_queue.put(idx, timeout=0.05)
+                        shm_index.value += 1
+                    else:
+                        # OPTIMIZACIÓN 2: Timeout aumentado
+                        frame_queue.put(frame, timeout=0.05)
                 except Exception:
                     pass
+            else:
+                time.sleep(0.01)
+
+        cap.release()
+        if use_shm:
+            for shm_arr in shm_arrays:
+                try:
+                    shm_arr['shm'].close()
+                except:
+                    pass
+
+    @staticmethod
+    def processing_process(frame_queue, result_queue, running, shm_buffers_info=None):
+        """Proceso de procesamiento completo (con soporte para shared memory)"""
+        adaptive_filter = OptimizedAdaptiveFilter()
+
+        use_shm = shm_buffers_info is not None
+        shm_arrays = []
+
+        if use_shm:
+            try:
+                for buf_info in shm_buffers_info:
+                    shm = shared_memory.SharedMemory(name=buf_info['name'])
+                    arr = np.ndarray((480, 640, 3), dtype=np.uint8, buffer=shm.buf)
+                    shm_arrays.append({'shm': shm, 'array': arr})
+            except Exception as e:
+                print(f"Warning: Shared memory no disponible en processing_process: {e}")
+                use_shm = False
+
+        while running.value == 1:
+            try:
+                data = frame_queue.get(timeout=0.1)
+
+                if use_shm and isinstance(data, int):
+                    # OPTIMIZACIÓN 3: Leer directamente desde shared memory
+                    idx = data % len(shm_arrays)
+                    frame = shm_arrays[idx]['array'].copy()
+                else:
+                    frame = data
+
+                conditions = adaptive_filter.analyze_conditions(frame)
+                smooth_conditions = adaptive_filter.temporal_smoothing(conditions)
+                filtered_frame = adaptive_filter.apply_filter(frame, smooth_conditions)
+
+                result_data = {
+                    'original': frame,
+                    'filtered': filtered_frame,
+                    'conditions': smooth_conditions,
+                    'filter_used': adaptive_filter.current_filter
+                }
+
+                try:
+                    # OPTIMIZACIÓN 2: Timeout aumentado
+                    result_queue.put(result_data, timeout=0.05)
+                except Exception:
+                    pass
+
             except Empty:
                 continue
             except KeyboardInterrupt:
                 break
             except Exception:
-                # errores puntuales: seguir
                 continue
 
-    # UI / Utilidades 
-    def _overlay(self, frame, conditions, filter_used):
+        if use_shm:
+            for shm_arr in shm_arrays:
+                try:
+                    shm_arr['shm'].close()
+                except:
+                    pass
 
-        img = frame.copy()
-        box = img.copy()
+    def add_info_overlay(self, frame, conditions, filter_used):
+        """Interfaz minimalista con información"""
+        overlay_frame = frame.copy()
 
-        # caja
-        cv2.rectangle(box, (10, 10), (300, 80), (0, 0, 0), -1)
-        cv2.addWeighted(box, 0.6, img, 0.4, 0, img)
-
-        # texto
         font = cv2.FONT_HERSHEY_SIMPLEX
-        fs, th = 0.4, 1
-        y = 25
-        cv2.putText(img, f"FPS: {self.current_fps:.0f} | {filter_used}", (15, y), font, fs, (255, 255, 255), th)
-        y += 15
+        font_scale = 0.4
+        thickness = 1
 
-        #Acceso seguro al brillo
-        val_bright = conditions.get("brightness_value", conditions.get("brightness", 0.0))
-        col = (255, 100, 100) if val_bright < 85 else (255, 255, 255)
-        cv2.putText(img, f"Brillo: {val_bright:.0f}", (15, y), font, fs, col, th)
+        overlay = overlay_frame.copy()
+        cv2.rectangle(overlay, (10, 10), (300, 80), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.6, overlay_frame, 0.4, 0, overlay_frame)
 
-        # indicadores L/F/R
-        yc = 60
-        dot = {
-            "low_light": (100, 255, 255) if conditions.get("low_light") else (60, 60, 60),
-            "fog":      (255, 100, 255) if conditions.get("fog")      else (60, 60, 60),
-            "rain":     (100, 255, 100) if conditions.get("rain")     else (60, 60, 60),
+        y_offset = 25
+        cv2.putText(overlay_frame, f"FPS: {self.current_fps:.0f} | {filter_used}",
+                   (15, y_offset), font, font_scale, (255, 255, 255), thickness)
+
+        y_offset += 15
+        brightness_color = (255, 100, 100) if conditions['brightness_value'] < 85 else (255, 255, 255)
+        cv2.putText(overlay_frame, f"Brillo: {conditions['brightness_value']:.0f}",
+                   (15, y_offset), font, font_scale, brightness_color, thickness)
+
+        status_colors = {
+            'low_light': (100, 255, 255) if conditions['low_light'] else (60, 60, 60),
+            'fog': (255, 100, 255) if conditions['fog'] else (60, 60, 60),
+            'rain': (100, 255, 100) if conditions['rain'] else (60, 60, 60)
         }
-        cv2.circle(img, (15, yc), 6, dot["low_light"], -1); cv2.putText(img, "L", (12, yc+3), font, 0.3, (0,0,0), 1)
-        cv2.circle(img, (40, yc), 6, dot["fog"], -1);      cv2.putText(img, "F", (37, yc+3), font, 0.3, (0,0,0), 1)
-        cv2.circle(img, (65, yc), 6, dot["rain"], -1);     cv2.putText(img, "R", (62, yc+3), font, 0.3, (0,0,0), 1)
-        return img
-    
-    def _tick_fps(self):
 
-        # Cálculo de FPS
+        cv2.circle(overlay_frame, (15, 60), 6, status_colors['low_light'], -1)
+        cv2.putText(overlay_frame, "L", (12, 63), font, 0.3, (0, 0, 0), 1)
+
+        cv2.circle(overlay_frame, (40, 60), 6, status_colors['fog'], -1)
+        cv2.putText(overlay_frame, "F", (37, 63), font, 0.3, (0, 0, 0), 1)
+
+        cv2.circle(overlay_frame, (65, 60), 6, status_colors['rain'], -1)
+        cv2.putText(overlay_frame, "R", (62, 63), font, 0.3, (0, 0, 0), 1)
+
+        return overlay_frame
+
+    def calculate_fps(self):
+        """Calcular FPS"""
         self.fps_counter += 1
         if self.fps_counter % 30 == 0:
-            now = time.time()
-            self.current_fps = 30 / (now - self.fps_start_time)
-            self.fps_start_time = now
-    
-    # Loop principal
+            current_time = time.time()
+            self.current_fps = 30 / (current_time - self.fps_start_time)
+            self.fps_start_time = current_time
+
     def run(self):
+        """Ejecutar sistema con pipeline de 2 procesos (con shared memory opcional)"""
         try:
             self.running.value = 1
-            p1 = Process(target=self.capture_process, args=(self.camera_id, self.frame_queue, self.running))
-            p2 = Process(target=self.processing_process, args=(self.frame_queue, self.result_queue, self.running))
-            p1.start(); p2.start()
+
+            if self.use_shared_memory and self.shm_buffers:
+                shm_info = [{'name': buf['name']} for buf in self.shm_buffers]
+                p1 = Process(target=self.capture_process,
+                           args=(self.camera_id, self.frame_queue, self.running, shm_info, self.shm_index))
+                p2 = Process(target=self.processing_process,
+                           args=(self.frame_queue, self.result_queue, self.running, shm_info))
+                mode_desc = "con shared memory"
+            else:
+                p1 = Process(target=self.capture_process,
+                           args=(self.camera_id, self.frame_queue, self.running))
+                p2 = Process(target=self.processing_process,
+                           args=(self.frame_queue, self.result_queue, self.running))
+                mode_desc = "con Queue"
+
+            p1.start()
+            p2.start()
+
             self.processes = [p1, p2]
 
-            print("FA iniciado. (q: salir, s: guardar frame)")
+            print(f"Sistema PIPELINE 2 PROCESOS iniciado (multiprocessing {mode_desc})")
+            print("Presiona 'q' para salir, 's' para guardar")
 
-            from queue import Empty
             while self.running.value == 1:
                 try:
-                    data = self.result_queue.get(timeout=0.1)
-                    original = data["original"]
-                    filtered = data["filtered"]
-                    cond = data["conditions"]
-                    f_used = data["filter_used"]
+                    result_data = self.result_queue.get(timeout=0.1)
 
-                    disp = self._overlay(filtered, cond, f_used)
-                    view = np.hstack([original, disp])
+                    original = result_data['original']
+                    filtered = result_data['filtered']
+                    conditions = result_data['conditions']
+                    filter_used = result_data['filter_used']
 
-                    if view.shape[1] > 1200:
-                        scale = 1200 / view.shape[1]
-                        view = cv2.resize(view, (int(view.shape[1]*scale), int(view.shape[0]*scale)))
+                    display_frame = self.add_info_overlay(filtered, conditions, filter_used)
+                    combined = np.hstack([original, display_frame])
 
-                    cv2.imshow("Filtro Adaptativo - Original vs Filtrado", view)
-                    self._tick_fps()
+                    if combined.shape[1] > 1200:
+                        scale = 1200 / combined.shape[1]
+                        new_width = int(combined.shape[1] * scale)
+                        new_height = int(combined.shape[0] * scale)
+                        combined = cv2.resize(combined, (new_width, new_height))
 
-                    k = cv2.waitKey(1) & 0xFF
-                    if k == ord('q'):
+                    cv2.imshow('Filtro Adaptativo - Original vs Filtrado', combined)
+
+                    self.calculate_fps()
+
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
                         break
-                    elif k == ord('s'):
-                        ts = int(time.time())
-                        cv2.imwrite(f"resultado_{ts}.jpg", view)
-                        print(f"Frame guardado: resultado_{ts}.jpg")
-                except Empty:
-                    continue
+                    elif key == ord('s'):
+                        timestamp = int(time.time())
+                        cv2.imwrite(f'resultado_{timestamp}.jpg', combined)
+                        print(f"Frame guardado: resultado_{timestamp}.jpg")
+
                 except KeyboardInterrupt:
                     break
-                except Exception:
-                    # fallos de UI: continuar
+                except Empty:
                     continue
+                except Exception:
+                    continue
+
+        except Exception as e:
+            print(f"Error: {e}")
         finally:
             self.cleanup()
 
     def cleanup(self):
-
+        """Limpiar recursos"""
         self.running.value = 0
         time.sleep(0.5)
+
         for p in self.processes:
             if p.is_alive():
                 p.terminate()
                 p.join(timeout=1)
+
+        if self.use_shared_memory:
+            self._cleanup_shared_memory()
+
         cv2.destroyAllWindows()
-        print("Sistema detenido.")
-    
+        print("\nSistema detenido")
+
+
 def main():
-        
-        print("=" * 80)
-        print("FILTRO ADAPTATIVO")
-        print("=" * 80)
-        try:
-            app = VideoPipeline(camera_id=0)
-            app.run()
-        except KeyboardInterrupt:
-            print("\nDetenido")
-        except Exception as e:
-            print(f"Error: {e}")
-    
+    """
+    Sistema Optimizado con Pipeline de 2 Procesos (Multiprocessing)
+    """
+    print("=" * 80)
+    print("FILTRO ADAPTATIVO PARALELO - MULTIPROCESSING (2 PROCESOS)")
+    print("=" * 80)
+    print("ARQUITECTURA: Pipeline de 2 procesos independientes")
+    print("OPTIMIZACIONES:")
+    print("  - Análisis en resolución reducida (320x240)")
+    print("  - Algoritmos LIME/FVR/ARR simplificados")
+    print("  - Queue size aumentado (2 → 10)")
+    print("  - Timeouts optimizados (0.01 → 0.05)")
+    print("  - Shared memory para frames")
+    print("=" * 80)
+    print("PROCESOS DEL PIPELINE:")
+    print("  1. Captura de Frames (I/O)")
+    print("  2. Procesamiento Completo (Análisis + Filtrado + Suavizado)")
+    print("=" * 80)
+
+    try:
+        detector = ParallelPipelineDetector(camera_id=0)
+        detector.run()
+
+    except KeyboardInterrupt:
+        print("\nDetenido por el usuario")
+    except Exception as e:
+        print(f"Error fatal: {e}")
+
 if __name__ == "__main__":
     main()

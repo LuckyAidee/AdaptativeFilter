@@ -1,0 +1,15 @@
+{
+    "sequential": {
+        "avg_time_ms": 5.970081352052234,
+        "fps": 167.50190508815209
+    },
+    "parallel": {
+        "avg_time_ms": 3.842445934231528,
+        "fps": 260.2508967247175
+    },
+    "speedup": 1.5537190253911077,
+    "efficiency": 77.68595126955539,
+    "latency_reduction": 35.63829858179947,
+    "num_threads": 2,
+    "num_frames_tested": 21000
+}
